@@ -1,6 +1,4 @@
 import re
-import math
-from math import log
 import rational
 from rational import rational
 import betalist
@@ -39,8 +37,6 @@ class poly:
             p = self.order-i
             if p == 0:
                 pre_down = pre
-            elif p == 1:
-                pre_down = pre + self.polytype[0]
             else:
                 pre_down = pre + self.polytype[0] + "^" + str(p) + " "
             retstring += c.str_internal(pre_down)
@@ -308,58 +304,6 @@ class poly:
         else:
             return retpoly.convert(newtype)
 
-class Z_fun:
-    def __init__(self,func):
-        self.func_str = [i[0] for i in func]
-        self.func_l = [i[1] for i in func]
-        self.coeffs = [0 for i in func]
-    
-    def copy(self):
-        retpoly = Z_fun([i for i in zip(self.func_str,self.func_l)])
-        if type(self.coeffs[0]) is poly:
-            retpoly.coeffs = [i.copy() for i in self.coeffs]
-        else:
-            retpoly.coeffs = [i for i in self.coeffs]
-        return retpoly
-    
-    def __str__(self):
-        retstr = "["
-        for c,f in zip(self.coeffs,self.func_str):
-            if c == 0 or (type(c) is rational and c.num == 0):
-                continue
-            if str(c) != "":
-                retstr += str(c) + "*" + f + " + "
-        retstr = retstr[:-3] + "]"
-        return retstr
-    
-    def evaluate(self,x,evaltype):
-        retpoly = self.copy()
-        
-        if evaltype != "Z":
-            if type(self.coeffs[0]) is poly:
-                for i in range(len(retpoly.coeffs)):
-                    retpoly.coeffs[i] = retpoly.coeffs[i].evaluate(x,evaltype)
-            return retpoly
-        else:
-            if type(self.coeffs[0]) is poly:
-                print("Non-rational polynomial detected")
-                exit()
-            else:
-                retval = self.coeffs[0].zero()
-                for i,(c,f) in enumerate(zip(self.coeffs,self.func_l)):
-                    #print(c,x,self.func_str[i],f(x,i),c.multiply(f(x,i)))
-                    #print("\t",retval,"+",end=" ")
-                    retval._add(c.scalar_multiply(f(x,i)))
-                    #print(c,"*",f(x,i),"=",retval)
-            return retval
-    
-    def integrate_unit(self,evaltype):
-        retpoly = self.copy()
-        if type(self.coeffs[0]) is poly:
-            for i in range(len(retpoly.coeffs)):
-                retpoly.coeffs[i] = retpoly.coeffs[i].integrate_unit(evaltype)
-        return retpoly
-    
 class N_poly(poly):
     def __init__(self, init_coeffs, base=None):
         super().__init__("N",init_coeffs,base)
@@ -370,13 +314,26 @@ class N_poly(poly):
     def __str__(self):
         return self.str_internal("")[:-3]
     
+    def trim(self):
+        delete_order = 0
+        for e in reversed(self.coeffs):
+            e.trim()
+            if type(e) is rational and e.num == 0:
+                delete_order += 1
+            else:
+                break
+        if delete_order > self.order:
+            self.order = 0
+            self.coeffs = [self.coeffs[-1].zero()]
+        elif delete_order > 0:
+            self.coeffs = self.coeffs[:-delete_order]
+            self.order -= delete_order
+            
     def str_internal(self,pre):
         retstring = ""
         for i,c in enumerate(self.coeffs):
             if i == 0:
                 pre_down = pre
-            elif i == 1:
-                pre_down = pre + self.polytype[0]
             else:
                 pre_down = pre + self.polytype[0] + "^-" + str(i) + " "
             retstring += c.str_internal(pre_down)
@@ -409,34 +366,3 @@ class N_poly(poly):
         retval.base = (len(retval.polytype) == 1)
         retval.trim()
         return retval
-        
-    def z_transform(self,evaltype):
-        #if we don't have that evaltype, treat as constant
-        if evaltype not in self.polytype:
-            retZfun = Z_fun([("1/(z-1)",lambda z,c: 1 / float(z-1))])
-            retZfun.coeff[0] = self.copy()
-            return retZfun
-        
-        #ensure than the evaltype is leading
-        if evaltype != self.polytype[0]:
-            newpolytype = evaltype + re.sub(evaltype,"",retval.polytype)
-            return self.convert(newpolytype).z_transform(evaltype)
-        
-        #else, evaluate immediately
-        z_range = 100
-        gen_func = (lambda z,c: (z.power(-(c-1))))
-        retZfun = Z_fun([("1/(z-1)",lambda z,c: z.add(rational(-1,1)).recip()),
-                         ("ln(z/(z-1))",lambda z,c: rational.find_close(log(float(z.multiply(z.add(rational(-1,1)).recip())))))] + \
-                         [("1/z^"+str(i),gen_func) for i in range(1,z_range+1)])
-        
-        for i in range(1,len(retZfun.func_l)):
-            retZfun.coeffs[i] = self.coeffs[0].zero()
-        retZfun.coeffs[0] = self.coeffs[0].copy()
-        if self.order > 0:
-            retZfun.coeffs[1] = self.coeffs[1].copy()
-        if self.order > 1:
-            for o,v in enumerate(self.coeffs[2:]):
-                for i in range(2,len(retZfun.func_l)):
-                    retZfun.coeffs[i]._add(v.scalar_multiply(rational(1,((i-1)**(o+2)))))
-        return retZfun
-    

@@ -1,66 +1,86 @@
+import poly_exp_prior
 from poly import *
 from betalist import *
 from rational import *
 import math
 from math import comb
 from math import exp
-
-def list_possibility(number):
-    possibilities = None
-    for i in range(number):
-        #i takes on the 'good' value
-        old_possibilities = possibilities
-        if  possibilities is None:
-            possibilities = [[0,]]
-        else:
-            possibilities = [p+[0,] for p in possibilities]
-    
-        #i takes on an already used value or the next highest new one
-        if old_possibilities is None:
-            possibilities.append([1,])
-        else:
-            for p in old_possibilities:
-                for n in range(1,max(p)+2):
-                    possibilities.append(p+[n,])
-    
-    #get the possibilities for each case
-    case_possibilities = {}
-    for p in possibilities:
-        counts = [sum([1 for pi in p if pi == item]) for item in range(max(p)+1)]
-        counts = tuple(sorted([c for c in counts if c > 0],reverse=True))
-        if counts in case_possibilities:
-            case_possibilities[counts].append(p)
-        else:
-            case_possibilities[counts] = [p]
-
-    #get the probabilities for each possibility for each case
-    cases = case_possibilities.keys()
-    case_probabilities = {}
-    multinomials_calculated = {}
-    for c in cases:
-        case_probabilities[c] = N_poly([betalist([(0,0,0)])])
-        for p in case_possibilities[c]:
-            pcount = sum([1 for pi in p if pi == 0])
-            qcount = len(p) - pcount
-            coeff = betalist.int_solver(1,pcount,qcount)
-            poly_coeffs = N_poly([rational(1,1)]+[rational(0,1)]*pcount)
-            for i in range(max(p)):
-                poly_coeffs._multiply(N_poly([rational(1,1),rational(-i,1)]))
-            poly_coeffs = N_poly([betalist([(coeff,pcount,qcount)]).scalar_multiply(co) for co in poly_coeffs.coeffs])
-            case_probabilities[c]._add(poly_coeffs)
-    
-    return case_probabilities
     
 class annotators:
+    
+    
+    def list_possibility(self,number):
+        possibilities = None
+        for i in range(number):
+            #i takes on the 'good' value
+            old_possibilities = possibilities
+            if  possibilities is None:
+                possibilities = [[0,]]
+            else:
+                possibilities = [p+[0,] for p in possibilities]
+
+            #i takes on an already used value or the next highest new one
+            if old_possibilities is None:
+                possibilities.append([1,])
+            else:
+                for p in old_possibilities:
+                    for n in range(1,max(p)+2):
+                        possibilities.append(p+[n,])
+
+        #get the possibilities for each case
+        case_possibilities = {}
+        for p in possibilities:
+            counts = [sum([1 for pi in p if pi == item]) for item in range(max(p)+1)]
+            counts = tuple(sorted([c for c in counts if c > 0],reverse=True))
+            if counts in case_possibilities:
+                case_possibilities[counts].append(p)
+            else:
+                case_possibilities[counts] = [p]
+
+        #get the probabilities for each possibility for each case
+        cases = case_possibilities.keys()
+        case_probabilities = {}
+        correct_point_probabilities_num = {}
+        correct_point_probabilities_den = {}
+        multinomials_calculated = {}
+        for c in cases:
+            #make empty polynomial containers
+            case_probabilities[c] = N_poly([betalist([(0,0,0)])])
+            for i in c:
+                correct_point_probabilities_num[(c,i)] = poly("N",[betalist([(0,0,0)])])
+                correct_point_probabilities_den[(c,i)] = poly("N",[betalist([(0,0,0)])])
+            for p in case_possibilities[c]:
+                pcount = sum([1 for pi in p if pi == 0])
+                qcount = sum([1 for pi in p if pi != 0])
+                coeff = betalist.int_solver(1,pcount,qcount)
+                poly_coeffs = poly("N",[rational(1,1)]+[rational(0,1)]*pcount)
+                for i in range(max(p)):
+                    poly_coeffs._multiply(poly("N",[rational(1,1),rational(-i,1)]))
+                org_poly_coeffs = poly("N",[betalist([(coeff,pcount,qcount)]).scalar_multiply(co) for co in poly_coeffs.coeffs])
+                poly_coeffs = N_poly([betalist([(coeff,pcount,qcount)]).scalar_multiply(co) for co in poly_coeffs.coeffs])
+                case_probabilities[c]._add(poly_coeffs)
+                
+                #find the probability of the first point being the true location given p,n
+                #print(c,max(p),p[0] == 0,len([1 for i in p if i == p[0]]),poly_coeffs)
+                correct_point_probabilities_den[(c,len([1 for i in p if i == p[0]]))]._add(org_poly_coeffs)
+                if p[0] == 0:
+                    correct_point_probabilities_num[(c,len([1 for i in p if i == 0]))]._add(org_poly_coeffs)
+            
+        return case_probabilities, correct_point_probabilities_num, correct_point_probabilities_den
+
     def __init__(self,number):
         #self.numerator = poly("N",[poly("P",[poly("Q",[1]),]),])
+        self.n_sum_fun = lambda x : poly_exp_prior.z_transform(x,"N")
         self.numerator = N_poly([betalist([(1,0,0)])])
         self.num_annotators = number
-        self.case_polys = list_possibility(number)
+        self.case_polys, self.correct_point_polys_num, self.correct_point_polys_den = self.list_possibility(number)
         self.cases = tuple(self.case_polys.keys())
         self.factor = rational(number+1,1)
         for c in self.cases:
             self.case_polys[c]._scalar_multiply(self.factor)
+        for k in self.correct_point_polys_num.keys():
+            self.correct_point_polys_num[k]._scalar_multiply(self.factor)
+            self.correct_point_polys_den[k]._scalar_multiply(self.factor)
         self.num_cases = [0 for c in self.cases]
         self.z_def = None
         self.convert()
@@ -110,10 +130,11 @@ class annotators:
             self.num_sum_valid = False
         
     def convert(self):
+        
         self.num_sum_valid = True
-        self.n_num_sum = self.numerator.z_transform("N")
+        self.n_num_sum = self.n_sum_fun(self.numerator)
         self.p_num_sum = self.numerator.integrate_unit("P")
-        self.pn_num_sum = self.p_num_sum.z_transform("N")
+        self.pn_num_sum = self.n_sum_fun(self.p_num_sum)
         if self.z_def is not None:
             self.prob_den = self.pn_num_sum.evaluate(self.z_def,"Z")
     
@@ -152,7 +173,7 @@ class annotators:
             
         #handle n
         if n is None:
-            prob_num = prob_num.z_transform("N")
+            prob_num = self.n_sum_fun(prob_num)
             prob_num = prob_num.evaluate(z,"Z")
         else:
             multiplier = z.power(-n)
@@ -173,7 +194,7 @@ class annotators:
             self.convert()
         
         p_lin = N_poly([betalist([(rational(1,power+1),power,0)])])
-        prob_num = (self.numerator.multiply(p_lin)).integrate_unit("P").z_transform("N").evaluate(z,"Z")
+        prob_num = self.n_sum_fun((self.numerator.multiply(p_lin)).integrate_unit("P")).evaluate(z,"Z")
         if self.z_def is None:
             prob_den = self.pn_num_sum.evaluate(z,"Z")
         else:
@@ -271,8 +292,12 @@ class annotators:
 if __name__ == "__main__" :
     
     
-    for k in range(3,11):
+    for k in range(3,6):
         model_base = annotators(k)
         print(model_base.cases,"\n")
+        
+        for k,v1 in model_base.correct_point_polys_num.items():
+            v2 = model_base.correct_point_polys_den[k]
+            print(k,str(v1),"/",str(v2),"\n")
 
 
