@@ -10,103 +10,120 @@ class annotators:
     
     
     def list_possibility(self,number):
-        possibilities = None
-        for i in range(number):
-            #i takes on the 'good' value
-            old_possibilities = possibilities
-            if  possibilities is None:
-                possibilities = [[0,]]
-            else:
-                possibilities = [p+[0,] for p in possibilities]
-
-            #i takes on an already used value or the next highest new one
-            if old_possibilities is None:
-                possibilities.append([1,])
-            else:
-                for p in old_possibilities:
-                    for n in range(1,max(p)+2):
-                        possibilities.append(p+[n,])
-
-        #get the possibilities for each case
-        case_possibilities = {}
-        for p in possibilities:
-            counts = [sum([1 for pi in p if pi == item]) for item in range(max(p)+1)]
-            counts = tuple(sorted([c for c in counts if c > 0],reverse=True))
-            if counts in case_possibilities:
-                case_possibilities[counts].append(p)
-            else:
-                case_possibilities[counts] = [p]
-
-        #get the probabilities for each possibility for each case
-        cases = case_possibilities.keys()
-        case_probabilities = {}
-        correct_point_probabilities_num = {}
-        correct_point_probabilities_den = {}
-        multinomials_calculated = {}
-        for c in cases:
-            #make empty polynomial containers
-            case_probabilities[c] = N_poly([betalist([(0,0,0)])])
-            for i in c:
-                correct_point_probabilities_num[(c,i)] = poly("N",[betalist([(0,0,0)])])
-                correct_point_probabilities_den[(c,i)] = poly("N",[betalist([(0,0,0)])])
-            for p in case_possibilities[c]:
-                pcount = sum([1 for pi in p if pi == 0])
-                qcount = sum([1 for pi in p if pi != 0])
-                coeff = betalist.int_solver(1,pcount,qcount)
-                poly_coeffs = poly("N",[rational(1,1)]+[rational(0,1)]*pcount)
-                for i in range(max(p)):
-                    poly_coeffs._multiply(poly("N",[rational(1,1),rational(-i,1)]))
-                org_poly_coeffs = poly("N",[betalist([(coeff,pcount,qcount)]).scalar_multiply(co) for co in poly_coeffs.coeffs])
-                poly_coeffs = N_poly([betalist([(coeff,pcount,qcount)]).scalar_multiply(co) for co in poly_coeffs.coeffs])
-                case_probabilities[c]._add(poly_coeffs)
-                
-                #find the probability of the first point being the true location given p,n
-                #print(c,max(p),p[0] == 0,len([1 for i in p if i == p[0]]),poly_coeffs)
-                correct_point_probabilities_den[(c,len([1 for i in p if i == p[0]]))]._add(org_poly_coeffs)
-                if p[0] == 0:
-                    correct_point_probabilities_num[(c,len([1 for i in p if i == 0]))]._add(org_poly_coeffs)
-            
-        return case_probabilities, correct_point_probabilities_num, correct_point_probabilities_den
-
-    def __init__(self,number):
-        #self.numerator = poly("N",[poly("P",[poly("Q",[1]),]),])
-        self.n_sum_fun = lambda x : poly_exp_prior.z_transform(x,"N")
-        self.numerator = N_poly([betalist([(1,0,0)])])
+        if number <= self.num_annotators:
+            return
+        self.list_possibility(number-1)
+        factor = rational(number+1,1)
+        
         self.num_annotators = number
-        self.case_polys, self.correct_point_polys_num, self.correct_point_polys_den = self.list_possibility(number)
+        
+        #general convenient function for updating case when appending
+        def inc_list_first_val(l,v):
+            ret_l = [c for c in l]
+            ret_l[ret_l.index(v)] += 1
+            return tuple(sorted(ret_l,reverse=True))
+        
+        #infrastructure for adding new cases
+        new_adv_case_possibilities = {}
+        def safe_add_case(k,v):
+            if k not in new_adv_case_possibilities.keys():
+                new_adv_case_possibilities[k] = 0
+            new_adv_case_possibilities[k] += v
+        
+        #update cases by adding new item at the end
+        for adv_case,num_configs in self.adv_case_possibilities.items():
+            
+            #add new G
+            if adv_case[1] == 0:
+                new_adv_case = (adv_case[0],1,adv_case[2],tuple(list(adv_case[3])+[1,]),adv_case[4])
+            elif adv_case[0] == 0:
+                new_adv_case = (adv_case[0],adv_case[1]+1,adv_case[2],inc_list_first_val(adv_case[3],adv_case[1]),adv_case[4]+1)
+            else:
+                new_adv_case = (adv_case[0],adv_case[1]+1,adv_case[2],inc_list_first_val(adv_case[3],adv_case[1]),adv_case[4])
+            safe_add_case(new_adv_case,num_configs)
+            
+            #add new N
+            new_adv_case = (adv_case[0],adv_case[1],adv_case[2]+1,tuple(list(adv_case[3])+[1,]),adv_case[4])
+            safe_add_case(new_adv_case,num_configs)
+            
+            #add existing N
+            if adv_case[0] == 0:
+                N_c = [c for i,c in enumerate(adv_case[3]) if adv_case[1] == 0 or i != adv_case[3].index(adv_case[1])]
+                for i in N_c:
+                    new_adv_case = (adv_case[0],adv_case[1],adv_case[2],inc_list_first_val(adv_case[3],i),adv_case[4])
+                    safe_add_case(new_adv_case,num_configs)
+            else:
+                N_c = [c for i,c in enumerate(adv_case[3]) if adv_case[1] == 0 or i != adv_case[3].index(adv_case[1])]
+                N_c = [c for i,c in enumerate(N_c) if i != N_c.index(adv_case[4])]
+                for i in N_c:
+                    new_adv_case = (adv_case[0],adv_case[1],adv_case[2],inc_list_first_val(adv_case[3],i),adv_case[4])
+                    safe_add_case(new_adv_case,num_configs)
+                new_adv_case = (adv_case[0],adv_case[1],adv_case[2],inc_list_first_val(adv_case[3],adv_case[4]),adv_case[4]+1)
+                safe_add_case(new_adv_case,num_configs)
+        self.adv_case_possibilities = new_adv_case_possibilities
+        
+        #make new empty polys
+        for adv_case,num_configs in self.adv_case_possibilities.items():
+            self.case_polys[adv_case[3]] = N_poly([betalist([(0,0,0)])])
+            
+        #add new polys
+        for adv_case,num_configs in self.adv_case_possibilities.items():
+            pcount = adv_case[1]
+            qcount = number-pcount
+            coeff = betalist.int_solver(1,pcount,qcount)
+            poly_coeffs = poly("N",[factor]+[rational(0,1)]*pcount)
+            for i in range(adv_case[2]):
+                poly_coeffs._multiply(poly("N",[rational(1,1),rational(-i,1)]))
+            org_poly_coeffs = poly("N",[betalist([(coeff,pcount,qcount)]).scalar_multiply(co) for co in poly_coeffs.coeffs])
+            poly_coeffs = N_poly([betalist([(coeff,pcount,qcount)]).scalar_multiply(co) for co in poly_coeffs.coeffs]).scalar_multiply(num_configs)
+            self.case_polys[adv_case[3]]._add(poly_coeffs)
+            
+            if (adv_case[3],adv_case[4]) not in self.correct_point_polys_den.keys():
+                self.correct_point_polys_den[(adv_case[3],adv_case[4])] = N_poly([betalist([(0,0,0)])])
+            self.correct_point_polys_den[(adv_case[3],adv_case[4])]._add(poly_coeffs)
+            if adv_case[0] == 0:
+                if (adv_case[3],adv_case[4]) not in self.correct_point_polys_num.keys():
+                    self.correct_point_polys_num[(adv_case[3],adv_case[4])] = N_poly([betalist([(0,0,0)])])
+                self.correct_point_polys_num[(adv_case[3],adv_case[4])]._add(poly_coeffs)
+        
         self.cases = tuple(self.case_polys.keys())
-        self.factor = rational(number+1,1)
-        for c in self.cases:
-            self.case_polys[c]._scalar_multiply(self.factor)
-        for k in self.correct_point_polys_num.keys():
-            self.correct_point_polys_num[k]._scalar_multiply(self.factor)
-            self.correct_point_polys_den[k]._scalar_multiply(self.factor)
-        self.num_cases = [0 for c in self.cases]
-        self.z_def = None
-        self.convert()
+
+    def __init__(self):
+        #create model for single annotator (can add others as necessary)
+        self.n_sum_fun = lambda x : poly_exp_prior.z_transform(x,"N")
+        self.num_annotators = 1
+        self.adv_case_possibilities = {(0,1,0,(1,),1) : 1, (1,0,1,(1,),1) : 1}
+        self.cases = (1,)
+        self.case_polys = {(1,) : N_poly([betalist([(1,0,0)])])}
+        self.correct_point_polys_num = {((1,),1) : N_poly([betalist([(1,1,0)])])}
+        self.correct_point_polys_den = {((1,),1) : N_poly([betalist([(1,0,0)])])}
+        self.clear()
+        
+    def increment_num_annotators(self):
+        self.list_possibility(self.num_annotators+1)
         
     def __str__(self):
         return str(self.numerator) + " /\n" + str(self.pn_num_sum)
     
     def clear(self):
         self.numerator = N_poly([betalist([(1,0,0)])])
-        self.num_cases = [0 for c in self.cases]
         self.z_def = None
+        self.num_cases = {}
         self.convert()
     
     def set_default_z(self,z):
         self.z_def = z
         self.convert()
-    
-    def print_case(self,number):
-        if number < len(self.cases):
-            print(self.cases[number])
-        else:
-            print("Invalid case, max is "+str(len(self.cases)))
 
-    def add_case(self, case_number, number_add):
-        self.num_cases[case_number] += number_add
-        self.multiplicitous_add(self.case_polys[self.cases[case_number]],number_add)
+    def add_case(self, case, number_add):
+        num_annotators = sum(case)
+        while self.num_annotators < num_annotators:
+            self.increment_num_annotators()
+        if case in self.num_cases.keys():
+            self.num_cases[case] += number_add
+        else:
+            self.num_cases[case] = number_add
+        self.multiplicitous_add(self.case_polys[case],number_add)
             
     def multiplicitous_add(self, base_poly, number):
         
@@ -292,12 +309,18 @@ class annotators:
 if __name__ == "__main__" :
     
     
-    for k in range(3,6):
-        model_base = annotators(k)
-        print(model_base.cases,"\n")
+    model_base = annotators()
+    for k in range(1,7):
+        #print(model_base.cases,"\n")
+        
+        for c in model_base.case_polys.items():
+            print(c[0],c[1])
         
         for k,v1 in model_base.correct_point_polys_num.items():
             v2 = model_base.correct_point_polys_den[k]
-            print(k,str(v1),"/",str(v2),"\n")
+            print(k,str(v1),"/",str(v2))
+        print("\n")
+        
+        model_base.increment_num_annotators()
 
 
